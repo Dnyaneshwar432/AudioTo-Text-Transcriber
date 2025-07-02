@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Voice Transcription</title>
+    <!-- Using Tailwind CSS for a clean, modern UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for the recording indicator */
+        .recording-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.2; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-2xl mx-4">
+        <div class="text-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Voice Transcription Tool</h1>
+            <p class="text-gray-500 mt-2">Select a language, record your voice, and get the transcript.</p>
+        </div>
+
+        <!-- API Key Input -->
+        <div class="mb-6">
+            <label for="apiKey" class="block text-sm font-medium text-gray-700 mb-1">Google Cloud API Key</label>
+            <input type="password" id="apiKey" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="Enter your API key here">
+            <p class="text-xs text-gray-500 mt-1">Your key is stored only in your browser. <a href="https://cloud.google.com/speech-to-text/docs/quickstart-client-libraries" target="_blank" class="text-blue-600 hover:underline">How to get an API key?</a></p>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex flex-col sm:flex-row items-center gap-4 mb-6">
+            <div class="w-full sm:w-1/3">
+                <label for="language" class="block text-sm font-medium text-gray-700 mb-1">Language</label>
+                <select id="language" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    <option value="hi-IN">Hindi (India)</option>
+                    <option value="mr-IN">Marathi (India)</option>
+                    <option value="te-IN">Telugu (India)</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="en-IN">English (India)</option>
+                    <option value="es-ES">Spanish (Spain)</option>
+                </select>
+            </div>
+            <div class="flex-grow flex items-center gap-4 w-full sm:w-auto">
+                <button id="startBtn" class="w-full sm:w-auto bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                    Start Recording
+                </button>
+                <button id="stopBtn" class="w-full sm:w-auto bg-red-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center" disabled>
+                     <svg class="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"></path></svg>
+                    Stop & Transcribe
+                </button>
+            </div>
+        </div>
+
+        <!-- Status & Output -->
+        <div class="bg-gray-50 p-4 rounded-lg">
+            <div id="status" class="text-center font-medium text-gray-600 mb-4 h-6">Ready to record</div>
+            <div class="w-full">
+                <label for="transcript" class="block text-sm font-medium text-gray-700 mb-1">Transcript</label>
+                <textarea id="transcript" rows="8" class="w-full p-4 border border-gray-200 rounded-lg bg-white" readonly placeholder="Your transcribed text will appear here..."></textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Element References
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const languageSelect = document.getElementById('language');
+        const transcriptTextarea = document.getElementById('transcript');
+        const statusDiv = document.getElementById('status');
+        const apiKeyInput = document.getElementById('apiKey');
+
+        // State variables
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        // Check for MediaRecorder API support
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            statusDiv.textContent = 'Your browser does not support audio recording.';
+            startBtn.disabled = true;
+            stopBtn.disabled = true;
+        }
+
+        /**
+         * Starts the audio recording process.
+         */
+        async function startRecording() {
+            if (!apiKeyInput.value) {
+                statusDiv.textContent = 'Error: Please enter your Google Cloud API key.';
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                isRecording = true;
+                
+                // --- MediaRecorder setup ---
+                // The API expects WEBM_OPUS, so we specify the MIME type.
+                const options = { mimeType: 'audio/webm; codecs=opus' };
+                mediaRecorder = new MediaRecorder(stream, options);
+
+                // Event listener for when data is available
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                // Event listener for when recording stops
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm; codecs=opus' });
+                    convertAudioToBase64(audioBlob);
+                    audioChunks = []; // Reset chunks for the next recording
+                    stream.getTracks().forEach(track => track.stop()); // Stop the microphone stream
+                };
+
+                mediaRecorder.start();
+                updateUIForRecording(true);
+
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                statusDiv.textContent = 'Error: Could not access microphone. Please grant permission.';
+                isRecording = false;
+                updateUIForRecording(false);
+            }
+        }
+
+        /**
+         * Stops the audio recording process.
+         */
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+                updateUIForRecording(false);
+                statusDiv.innerHTML = 'Transcribing... Please wait.';
+            }
+        }
+
+        /**
+         * Converts the audio blob to a Base64 encoded string.
+         * @param {Blob} audioBlob - The recorded audio data.
+         */
+        function convertAudioToBase64(audioBlob) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                // The result includes the 'data:audio/webm;...;base64,' prefix, which we need to remove.
+                const base64Audio = reader.result.split(',')[1];
+                sendToSpeechAPI(base64Audio);
+            };
+            reader.readAsDataURL(audioBlob);
+        }
+
+        /**
+         * Sends the audio data to the Google Speech-to-Text API.
+         * @param {string} base64Audio - The Base64 encoded audio data.
+         */
+        async function sendToSpeechAPI(base64Audio) {
+            const apiKey = apiKeyInput.value;
+            const languageCode = languageSelect.value;
+            const apiUrl = `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`;
+
+            const requestBody = {
+                config: {
+                    encoding: 'WEBM_OPUS',
+                    languageCode: languageCode,
+                    // sampleRateHertz: 48000, // This might be needed depending on the recording device
+                },
+                audio: {
+                    content: base64Audio,
+                },
+            };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    if (data.results && data.results.length > 0) {
+                        const transcript = data.results[0].alternatives[0].transcript;
+                        transcriptTextarea.value = transcript;
+                        statusDiv.textContent = 'Transcription successful!';
+                    } else {
+                        transcriptTextarea.value = '';
+                        statusDiv.textContent = 'No speech detected. Please try again.';
+                    }
+                } else {
+                    console.error('API Error:', data.error);
+                    statusDiv.textContent = `Error: ${data.error.message}`;
+                }
+
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                statusDiv.textContent = 'Error: Could not connect to the transcription service.';
+            } finally {
+                startBtn.disabled = false; // Re-enable start button after transcription attempt
+            }
+        }
+
+        /**
+         * Updates the UI state based on whether recording is active.
+         * @param {boolean} recording - True if recording, false otherwise.
+         */
+        function updateUIForRecording(recording) {
+            if (recording) {
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                languageSelect.disabled = true;
+                statusDiv.innerHTML = 'Recording...<span class="recording-indicator"></span>';
+                transcriptTextarea.value = '';
+            } else {
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                languageSelect.disabled = false;
+                statusDiv.textContent = 'Ready to record';
+            }
+        }
+
+        // --- Event Listeners ---
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+
+    </script>
+</body>
+</html>
